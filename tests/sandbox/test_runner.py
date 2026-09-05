@@ -7,8 +7,12 @@ import tempfile
 
 from config.constants import OPENSRE_TMP_DIR, ensure_opensre_tmp_dir
 from platform.sandbox.runner import (
+    _COMMON_ENV_KEYS,
+    _WINDOWS_ENV_KEYS,
     MAX_TIMEOUT,
     SandboxResult,
+    _base_env_keys,
+    _sandbox_env,
     run_python_sandbox,
 )
 
@@ -179,3 +183,43 @@ class TestSandboxResultModel:
             timed_out=True,
         )
         assert r.success is False
+
+
+class TestSandboxEnvironment:
+    def test_posix_keys_are_unchanged(self, monkeypatch) -> None:
+        monkeypatch.setattr(os, "name", "posix")
+        assert _base_env_keys() == _COMMON_ENV_KEYS
+
+    def test_windows_adds_system_paths(self, monkeypatch) -> None:
+        monkeypatch.setattr(os, "name", "nt")
+        keys = _base_env_keys()
+        assert keys[: len(_COMMON_ENV_KEYS)] == _COMMON_ENV_KEYS
+        for key in _WINDOWS_ENV_KEYS:
+            assert key in keys
+
+    def test_windows_forwards_system_root(self, monkeypatch) -> None:
+        """Winsock cannot initialise without SystemRoot, so it must be forwarded."""
+        monkeypatch.setattr(os, "name", "nt")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
+        assert _sandbox_env(None).get("SystemRoot") == r"C:\Windows"
+
+    def test_system_root_not_forwarded_on_posix(self, monkeypatch) -> None:
+        monkeypatch.setattr(os, "name", "posix")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
+        assert "SystemRoot" not in _sandbox_env(None)
+
+    def test_path_is_forwarded(self, monkeypatch) -> None:
+        monkeypatch.setenv("PATH", "/sandbox/bin")
+        assert _sandbox_env(None)["PATH"] == "/sandbox/bin"
+
+    def test_unlisted_variables_are_dropped(self, monkeypatch) -> None:
+        monkeypatch.setenv("SANDBOX_SECRET_TOKEN", "shhh")
+        assert "SANDBOX_SECRET_TOKEN" not in _sandbox_env(None)
+
+    def test_extra_env_is_merged(self) -> None:
+        assert _sandbox_env({"GITHUB_TOKEN": "abc"})["GITHUB_TOKEN"] == "abc"
+
+    def test_empty_values_are_skipped(self, monkeypatch) -> None:
+        monkeypatch.setenv("LANG", "")
+        assert "LANG" not in _sandbox_env({"EMPTY": ""})
+        assert "EMPTY" not in _sandbox_env({"EMPTY": ""})

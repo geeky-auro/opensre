@@ -17,7 +17,8 @@ from config.constants import OPENSRE_TMP_DIR, ensure_opensre_tmp_dir
 DEFAULT_TIMEOUT: int = 30
 MAX_TIMEOUT: int = 60
 _SANDBOX_TMP_ROOT = os.path.realpath(os.fspath(OPENSRE_TMP_DIR))
-_BASE_ENV_KEYS = (
+# Environment variables forwarded to the sandbox subprocess on every platform.
+_COMMON_ENV_KEYS: tuple[str, ...] = (
     "HOME",
     "LANG",
     "LC_ALL",
@@ -26,6 +27,18 @@ _BASE_ENV_KEYS = (
     "REQUESTS_CA_BUNDLE",
     "SSL_CERT_FILE",
     "TMPDIR",
+)
+
+# Windows counterparts of the keys above, plus the system paths the OS itself
+# needs. ``SystemRoot``/``SystemDrive`` are required to load the Winsock service
+# provider catalogue, so a subprocess started without them fails every socket
+# call with WinError 10106 even when ``allow_network=True``.
+_WINDOWS_ENV_KEYS: tuple[str, ...] = (
+    "SystemDrive",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
 )
 
 # Preamble injected before user code when network access is disabled.
@@ -205,10 +218,17 @@ def run_python_sandbox(
                 os.unlink(tmp_path)
 
 
+def _base_env_keys() -> tuple[str, ...]:
+    """Return the environment keys the sandbox forwards on the current platform."""
+    if os.name == "nt":
+        return _COMMON_ENV_KEYS + _WINDOWS_ENV_KEYS
+    return _COMMON_ENV_KEYS
+
+
 def _sandbox_env(extra_env: dict[str, str] | None) -> dict[str, str]:
     """Build a narrow subprocess environment plus explicitly approved values."""
     sandbox_env: dict[str, str] = {}
-    for key in _BASE_ENV_KEYS:
+    for key in _base_env_keys():
         value = os.environ.get(key)
         if value:
             sandbox_env[key] = value
